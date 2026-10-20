@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Su Savaşı</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Rubik:wght@400;500;700&display=swap">
+<style>
+/* Layout: a backyard seen from above — field on the left, scoreboard rail on the right; stacks on phones. */
+:root {
+  --bg: #0e2a3a;
+  --panel: #143a4f;
+  --line: #22566f;
+  --fg: #f1fbff;
+  --muted: #9cc7d8;
+  --water: #4cc3ff;
+  --sun: #ffd23f;
+  --font-display: "Lilita One", "Arial Rounded MT Bold", system-ui, sans-serif;
+  --font-body: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--fg); margin: 0; }
+body { font-family: var(--font-body); font-size: 15px; padding-inline: 16px; padding-block: 18px 32px; }
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(32px, 7vw, 52px); margin: 0; line-height: 1; color: var(--water); letter-spacing: .5px; text-shadow: 0 3px 0 #08374f; }
+h1 span { color: var(--sun); }
+.sub { color: var(--muted); margin: 6px 0 0; }
+form.join { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+label { display: grid; gap: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+input { font: inherit; font-size: 15px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 140px; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+button { font: inherit; font-weight: 700; cursor: pointer; border-radius: 8px; border: 0; padding: 9px 14px; background: var(--water); color: #04263a; }
+button.ghost { background: var(--panel); color: var(--fg); border: 1px solid var(--line); }
+.game { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; align-items: start; }
+@media (max-width: 800px) { .game { grid-template-columns: minmax(0, 1fr); } }
+.board { position: relative; width: 100%; aspect-ratio: 16 / 10; max-width: 100%; }
+canvas { display: block; width: 100%; height: 100%; border-radius: 12px; border: 3px solid var(--line); touch-action: none; cursor: crosshair; background: #6fbf5a; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; font-family: var(--font-display); font-size: clamp(22px, 5vw, 40px); color: #fff; text-shadow: 0 3px 0 #0b3c56; }
+aside { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; min-width: 0; }
+aside h2 { font-family: var(--font-display); font-weight: 400; font-size: 18px; margin: 0; color: var(--sun); letter-spacing: .04em; }
+ol.players { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+ol.players li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.sw { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.7); }
+.nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc { font-family: var(--font-display); font-size: 18px; color: var(--sun); }
+.status { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.status b { color: var(--fg); }
+.feed { font-size: 13px; display: grid; gap: 3px; min-height: 3.6em; color: var(--fg); }
+.feed div { overflow-wrap: anywhere; }
+.help { color: var(--muted); font-size: 13px; margin: 0; line-height: 1.5; }
+kbd { font-family: var(--font-body); font-weight: 700; font-size: 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--fg); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Su <span>Savaşı</span></h1>
+      <p class="sub">Balonları doldur, arkadaşlarını sırılsıklam et. Üç isabet alan ıslanıp elenir.</p>
+    </div>
+    <form class="join" id="joinForm">
+      <label for="nick">Takma ad<input id="nick" maxlength="12" autocomplete="off"></label>
+      <label for="roomCode">Oda kodu<input id="roomCode" maxlength="16" autocomplete="off"></label>
+      <button type="submit">Odaya gir</button>
+    </form>
+  </header>
+
+  <div class="game">
+    <div class="board">
+      <canvas id="cv" width="960" height="600" aria-label="Oyun alanı"></canvas>
+      <div class="overlay" id="overlay"></div>
+    </div>
+    <aside>
+      <h2>Skor tablosu</h2>
+      <ol class="players" id="players"></ol>
+      <div class="row">
+        <button type="button" class="ghost" id="copyBtn">Davet linkini kopyala</button>
+      </div>
+      <input id="linkBox" readonly hidden aria-label="Davet linki" style="width:100%">
+      <div class="status" id="status">Bağlanıyor…</div>
+      <div class="feed" id="feed" aria-live="polite"></div>
+    </aside>
+  </div>
+
+  <p class="help"><b>Bilgisayar:</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> veya oklarla yürü, fareyle nişan al, tıklayarak balon at. &nbsp;<b>Telefon:</b> ekranın sol yarısında parmağını sürükleyerek yürü, sağ yarısına dokunarak dokunduğun yere at. Balonların kendiliğinden dolar; ortadaki havuzda daha hızlı dolar.</p>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(() => {
+  // ---------- constants ----------
+  const W = 960, H = 600, R = 18, SPEED = 230, BSPEED = 560, BRANGE = 500, BR = 7;
+  const HIT = 34, MAXAMMO = 8, RESPAWN = 2500, PREFIX = "susavasi-v1-";
+  const COLORS = ["#ff5d73", "#ffb547", "#b6f06a", "#c79bff", "#ff6fae", "#ffe15e", "#ff8a4c", "#ffffff"];
+  const CRATES = [
+    { x: 150, y: 110, w: 90, h: 60 }, { x: 720, y: 110, w: 90, h: 60 },
+    { x: 150, y: 430, w: 90, h: 60 }, { x: 720, y: 430, w: 90, h: 60 },
+    { x: 455, y: 40, w: 50, h: 90 }, { x: 455, y: 470, w: 50, h: 90 },
+    { x: 300, y: 270, w: 40, h: 60 }, { x: 620, y: 270, w: 40, h: 60 }
+  ];
+  const POOL = { x: W / 2, y: H / 2, r: 62 };
+
+  const $ = id => document.getElementById(id);
+  const cv = $("cv"), ctx = cv.getContext("2d");
+  const safeGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const clean = s => String(s || "").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 16);
+  const randCode = () => Array.from({ length: 4 }, () => "abcdefghjkmnpqrstuvwxyz23456789"[Math.floor(Math.random() * 31)]).join("");
+
+  // ---------- my player ----------
+  const me = {
+    n: safeGet("ss_nick") || "Oyuncu" + Math.floor(Math.random() * 90 + 10),
+    c: COLORS[Math.floor(Math.random() * COLORS.length)],
+    x: 0, y: 0, w: 0, k: 0, a: 0, ammo: MAXAMMO, deadUntil: 0, aim: 0
+  };
+  $("nick").value = me.n;
+  let code = clean(new URLSearchParams(location.search).get("oda")) || randCode();
+  $("roomCode").value = code;
+
+  // ---------- world helpers ----------
+  const inCrate = (x, y, pad) => CRATES.some(c => x > c.x - pad && x < c.x + c.w + pad && y > c.y - pad && y < c.y + c.h + pad);
+  function spawn() {
+    for (let i = 0; i < 100; i++) {
+      const x = R + Math.random() * (W - 2 * R), y = R + Math.random() * (H - 2 * R);
+      if (!inCrate(x, y, R + 4) && Math.hypot(x - POOL.x, y - POOL.y) > POOL.r + R) {
+        let far = true; for (const p of remote.values()) if (p.s.a && Math.hypot(p.dx - x, p.dy - y) < 180) far = false;
+        if (far || i > 80) { me.x = x; me.y = y; break; }
+      }
+    }
+    me.w = 0; me.a = 1; me.ammo = MAXAMMO;
+  }
+  function moveMe(dx, dy) {
+    me.x = Math.max(R, Math.min(W - R, me.x + dx));
+    me.y = Math.max(R, Math.min(H - R, me.y + dy));
+    for (const c of CRATES) { // push out of crates
+      const nx = Math.max(c.x, Math.min(me.x, c.x + c.w)), ny = Math.max(c.y, Math.min(me.y, c.y + c.h));
+      const d = Math.hypot(me.x - nx, me.y - ny);
+      if (d < R) {
+        if (d === 0) { me.y = c.y - R; continue; }
+        me.x = nx + (me.x - nx) / d * R; me.y = ny + (me.y - ny) / d * R;
+      }
+    }
+  }
+
+  // ---------- network (PeerJS, one player is the hub) ----------
+  let peer = null, isHost = false, hostConn = null, myId = null, gen = 0, online = false;
+  const conns = new Map();        // host only: id -> DataConnection
+  const remote = new Map();       // id -> { s, t, dx, dy }
+
+  function sanitizeState(s) {
+    if (!s || typeof s !== "object") return null;
+    const num = (v, lo, hi) => (typeof v === "number" && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : lo;
+    return {
+      n: String(s.n || "Oyuncu").slice(0, 12), c: COLORS.includes(s.c) ? s.c : "#cccccc",
+      x: num(s.x, 0, W), y: num(s.y, 0, H), w: num(s.w, 0, 100), k: Math.floor(num(s.k, 0, 9999)),
+      a: s.a ? 1 : 0, aim: num(s.aim, -10, 10)
+    };
+  }
+  function setRemote(id, raw, age) {
+    if (id === myId) return;
+    const s = sanitizeState(raw); if (!s) return;
+    const prev = remote.get(id);
+    remote.set(id, { s, t: performance.now() - (age || 0), dx: prev && prev.s.a && s.a ? prev.dx : s.x, dy: prev && prev.s.a && s.a ? prev.dy : s.y });
+  }
+  const myState = () => ({ n: me.n, c: me.c, x: Math.round(me.x), y: Math.round(me.y), w: Math.round(me.w), k: me.k, a: me.a, aim: +me.aim.toFixed(2) });
+
+  function status(html) { $("status").innerHTML = html; }
+  function teardown() {
+    gen++; online = false; isHost = false; hostConn = null;
+    conns.clear(); remote.clear(); balloons.length = 0;
+    if (peer) { try { peer.destroy(); } catch {} peer = null; }
+  }
+  function connect() {
+    teardown();
+    const g = gen;
+    if (!window.Peer) { status("<b>Bağlantı kütüphanesi yüklenemedi.</b> İnternetini kontrol edip sayfayı yenile."); return; }
+    status("Odaya bağlanılıyor…");
+    const p = new Peer(PREFIX + code); peer = p;
+    p.on("open", id => { if (g !== gen) return; myId = id; isHost = true; online = true; renderStatus(); });
+    p.on("connection", c => { if (g !== gen) return; hostSetup(c); });
+    p.on("error", e => {
+      if (g !== gen) return;
+      if (e.type === "unavailable-id") { try { p.destroy(); } catch {} joinAsClient(g); }
+      else netError(e, g);
+    });
+    p.on("disconnected", () => { if (g === gen && !p.destroyed) try { p.reconnect(); } catch {} });
+  }
+  function joinAsClient(g) {
+    const p = new Peer(); peer = p;
+    p.on("open", id => {
+      if (g !== gen) return; myId = id;
+      const c = p.connect(PREFIX + code, { serialization: "json" }); hostConn = c;
+      c.on("open", () => { if (g !== gen) return; online = true; renderStatus(); });
+      c.on("data", d => { if (g === gen) onData(d, null); });
+      c.on("close", () => { if (g === gen) retry(); });
+    });
+    p.on("error", e => {
+      if (g !== gen) return;
+      if (e.type === "peer-unavailable") retry(); else netError(e, g);
+    });
+  }
+  function retry() { // hub left: someone else becomes the hub
+    online = false; status("Oda kurucusu ayrıldı, yeniden bağlanılıyor…");
+    const g = gen; setTimeout(() => { if (g === gen) connect(); }, 300 + Math.random() * 1500);
+  }
+  function netError(e, g) {
+    status("<b>Bağlantı sorunu:</b> " + (e && e.type ? e.type : "bilinmiyor") + ". Birkaç saniye içinde tekrar deneniyor.");
+    setTimeout(() => { if (g === gen) connect(); }, 3000);
+  }
+  function hostSetup(c) {
+    c.on("open", () => conns.set(c.peer, c));
+    c.on("data", d => {
+      if (!d || typeof d !== "object") return;
+      if (d.type === "st") setRemote(c.peer, d.s, 0);
+      else if (d.type === "ev") { handleEvent(d.ev, c.peer); for (const [id, o] of conns) if (id !== c.peer && o.open) o.send({ type: "ev", ev: d.ev, from: c.peer }); }
+    });
+    c.on("close", () => { conns.delete(c.peer); remote.delete(c.peer); });
+  }
+  function onData(d) {
+    if (!d || typeof d !== "object") return;
+    if (d.type === "all" && d.s && typeof d.s === "object") {
+      const seen = new Set();
+      for (const id of Object.keys(d.s).slice(0, 32)) { seen.add(id); setRemote(id, d.s[id], d.s[id] && d.s[id].age); }
+      for (const id of [...remote.keys()]) if (!seen.has(id)) remote.delete(id);
+    } else if (d.type === "ev") handleEvent(d.ev, String(d.from || ""));
+  }
+  function sendEvent(ev) {
+    handleEvent(ev, myId);
+    if (isHost) { for (const o of conns.values()) if (o.open) o.send({ type: "ev", ev, from: myId }); }
+    else if (hostConn && hostConn.open) hostConn.send({ type: "ev", ev });
+  }
+  setInterval(() => {
+    if (!online) return;
+    if (isHost) {
+      const now = performance.now(), all = { [myId]: { ...myState(), age: 0 } };
+      for (const [id, r] of remote) if (now - r.t < 5000) all[id] = { ...r.s, age: Math.round(now - r.t) };
+      for (const o of conns.values()) if (o.open) o.send({ type: "all", s: all });
+    } else if (hostConn && hostConn.open) hostConn.send({ type: "st", s: myState() });
+  }, 60);
+
+  // ---------- balloons & events ----------
+  const balloons = [];   // {id, owner, x, y, vx, vy, dist}
+  const splashes = [];   // {x, y, t, big}
+  let shotN = 0, lastShot = 0;
+  const nameOf = id => id === myId ? me.n : (remote.get(id) ? remote.get(id).s.n : "Biri");
+
+  function handleEvent(ev, from) {
+    if (!ev || typeof ev !== "object") return;
+    const num = v => typeof v === "number" && isFinite(v);
+    if (ev.k === "shot" && num(ev.x) && num(ev.y) && num(ev.vx) && num(ev.vy)) {
+      if (balloons.length > 200) return;
+      const m = Math.hypot(ev.vx, ev.vy) || 1;
+      balloons.push({ id: String(ev.id).slice(0, 40), owner: from, x: ev.x, y: ev.y, vx: ev.vx / m * BSPEED, vy: ev.vy / m * BSPEED, dist: 0 });
+    } else if (ev.k === "hit") {
+      const i = balloons.findIndex(b => b.id === ev.id); if (i >= 0) balloons.splice(i, 1);
+      if (num(ev.x) && num(ev.y)) splashes.push({ x: ev.x, y: ev.y, t: performance.now(), big: !!ev.soak });
+      if (ev.soak) {
+        if (ev.by === myId && from !== myId) me.k++;
+        addFeed(nameOf(ev.by) + " → " + nameOf(from) + " sırılsıklam!");
+      }
+    }
+  }
+  function addFeed(text) {
+    const f = $("feed"), d = document.createElement("div"); d.textContent = "💦 " + text;
+    f.prepend(d); while (f.children.length > 4) f.lastChild.remove();
+  }
+  function shoot(tx, ty) {
+    if (!me.a) return;
+    const now = performance.now();
+    if (now - lastShot < 280 || me.ammo < 1) return;
+    const dx = tx - me.x, dy = ty - me.y, m = Math.hypot(dx, dy); if (m < 2) return;
+    lastShot = now; me.ammo -= 1;
+    sendEvent({ k: "shot", id: (myId || "x") + ":" + (shotN++), x: Math.round(me.x + dx / m * (R + 4)), y: Math.round(me.y + dy / m * (R + 4)), vx: +(dx / m).toFixed(3), vy: +(dy / m).toFixed(3) });
+  }
+
+  // ---------- input ----------
+  const keys = new Set(); let mouse = { x: W / 2, y: H / 2 };
+  const MAP = { ArrowUp: "u", w: "u", W: "u", ArrowDown: "d", s: "d", S: "d", ArrowLeft: "l", a: "l", A: "l", ArrowRight: "r", d: "r", D: "r" };
+  addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT") return;
+    if (MAP[e.key]) { keys.add(MAP[e.key]); e.preventDefault(); }
+    if (e.key === " ") { shoot(mouse.x, mouse.y); e.preventDefault(); }
+  });
+  addEventListener("keyup", e => { if (MAP[e.key]) keys.delete(MAP[e.key]); });
+  addEventListener("blur", () => keys.clear());
+  const toWorld = (cx, cy) => { const r = cv.getBoundingClientRect(); return { x: (cx - r.left) / r.width * W, y: (cy - r.top) / r.height * H }; };
+  cv.addEventListener("mousemove", e => { mouse = toWorld(e.clientX, e.clientY); });
+  cv.addEventListener("mousedown", e => { mouse = toWorld(e.clientX, e.clientY); shoot(mouse.x, mouse.y); });
+
+  // touch: left half = drag joystick, right half = tap to throw
+  let stick = null; // {id, ox, oy, x, y}
+  cv.addEventListener("touchstart", e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const p = toWorld(t.clientX, t.clientY);
+      if (p.x < W / 2 && !stick) stick = { id: t.identifier, ox: p.x, oy: p.y, x: p.x, y: p.y };
+      else { mouse = p; shoot(p.x, p.y); }
+    }
+  }, { passive: false });
+  cv.addEventListener("touchmove", e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) if (stick && t.identifier === stick.id) { const p = toWorld(t.clientX, t.clientY); stick.x = p.x; stick.y = p.y; }
+  }, { passive: false });
+  const endTouch = e => { for (const t of e.changedTouches) if (stick && t.identifier === stick.id) stick = null; };
+  cv.addEventListener("touchend", endTouch); cv.addEventListener("touchcancel", endTouch);
+
+  // ---------- simulation ----------
+  let last = performance.now(), ammoTimer = 0;
+  function update(dt) {
+    const now = performance.now();
+    if (!me.a && now >= me.deadUntil) spawn();
+    if (me.a) {
+      let mx = (keys.has("r") ? 1 : 0) - (keys.has("l") ? 1 : 0), my = (keys.has("d") ? 1 : 0) - (keys.has("u") ? 1 : 0);
+      if (stick) { const sx = stick.x - stick.ox, sy = stick.y - stick.oy, sm = Math.hypot(sx, sy); if (sm > 8) { mx = sx / Math.max(sm, 50); my = sy / Math.max(sm, 50); } }
+      const m = Math.hypot(mx, my); if (m > 1) { mx /= m; my /= m; }
+      const inPool = Math.hypot(me.x - POOL.x, me.y - POOL.y) < POOL.r;
+      const sp = SPEED * (inPool ? 0.6 : 1);
+      moveMe(mx * sp * dt, my * sp * dt);
+      me.aim = Math.atan2(mouse.y - me.y, mouse.x - me.x);
+      ammoTimer += dt * (inPool ? 4 : 1);
+      if (ammoTimer > 0.7) { ammoTimer = 0; me.ammo = Math.min(MAXAMMO, me.ammo + 1); }
+      me.w = Math.max(0, me.w - dt * 3); // dry off slowly
+    }
+    // remote smoothing
+    for (const r of remote.values()) { const f = Math.min(1, dt * 14); r.dx += (r.s.x - r.dx) * f; r.dy += (r.s.y - r.dy) * f; }
+    // balloons
+    for (let i = balloons.length - 1; i >= 0; i--) {
+      const b = balloons[i];
+      b.x += b.vx * dt; b.y += b.vy * dt; b.dist += BSPEED * dt;
+      if (b.dist > BRANGE || b.x < 0 || b.y < 0 || b.x > W || b.y > H || inCrate(b.x, b.y, 0)) {
+        splashes.push({ x: b.x, y: b.y, t: now, big: false }); balloons.splice(i, 1); continue;
+      }
+      // the target decides if it got hit
+      if (me.a && b.owner !== myId && Math.hypot(b.x - me.x, b.y - me.y) < R + BR) {
+        me.w += HIT;
+        const soak = me.w >= 100;
+        sendEvent({ k: "hit", id: b.id, by: b.owner, x: Math.round(me.x), y: Math.round(me.y), soak });
+        if (soak) { me.a = 0; me.deadUntil = now + RESPAWN; }
+      }
+    }
+    for (let i = splashes.length - 1; i >= 0; i--) if (now - splashes[i].t > 500) splashes.splice(i, 1);
+    for (const [id, r] of remote) if (now - r.t > 8000) remote.delete(id);
+  }
+
+  // ---------- drawing ----------
+  const grass = document.createElement("canvas"); grass.width = W; grass.height = H;
+  (() => {
+    const g = grass.getContext("2d");
+    g.fillStyle = "#6fbf5a"; g.fillRect(0, 0, W, H);
+    for (let x = 0; x < W; x += 60) { g.fillStyle = (x / 60) % 2 ? "#69b754" : "#74c45f"; g.fillRect(x, 0, 60, H); }
+    for (let i = 0; i < 500; i++) { g.fillStyle = Math.random() < .5 ? "#5ea94a" : "#82cf6b"; g.fillRect(Math.random() * W, Math.random() * H, 2, 5); }
+    // pool
+    g.fillStyle = "#e9e2cf"; g.beginPath(); g.arc(POOL.x, POOL.y, POOL.r + 10, 0, 7); g.fill();
+    const pg = g.createRadialGradient(POOL.x - 15, POOL.y - 15, 5, POOL.x, POOL.y, POOL.r);
+    pg.addColorStop(0, "#9be7ff"); pg.addColorStop(1, "#2aa3e0");
+    g.fillStyle = pg; g.beginPath(); g.arc(POOL.x, POOL.y, POOL.r, 0, 7); g.fill();
+    // crates
+    for (const c of CRATES) {
+      g.fillStyle = "rgba(0,0,0,.18)"; g.fillRect(c.x + 5, c.y + 6, c.w, c.h);
+      g.fillStyle = "#b9874d"; g.fillRect(c.x, c.y, c.w, c.h);
+      g.strokeStyle = "#7d5528"; g.lineWidth = 4; g.strokeRect(c.x + 2, c.y + 2, c.w - 4, c.h - 4);
+      g.beginPath(); g.moveTo(c.x + 4, c.y + 4); g.lineTo(c.x + c.w - 4, c.y + c.h - 4); g.stroke();
+    }
+  })();
+
+  function drawPlayer(s, x, y, isMe) {
+    ctx.fillStyle = "rgba(0,0,0,.2)"; ctx.beginPath(); ctx.ellipse(x + 3, y + 6, R, R * 0.7, 0, 0, 7); ctx.fill();
+    // launcher
+    ctx.save(); ctx.translate(x, y); ctx.rotate(s.aim || 0);
+    ctx.fillStyle = "#2f7fd1"; ctx.fillRect(R - 6, -5, 18, 10); ctx.restore();
+    ctx.fillStyle = s.c; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill();
+    // wetness fills the body from the bottom
+    if (s.w > 0) {
+      ctx.save(); ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.clip();
+      ctx.fillStyle = "rgba(40,150,240,.75)"; const h = 2 * R * Math.min(1, s.w / 100); ctx.fillRect(x - R, y + R - h, 2 * R, h); ctx.restore();
+    }
+    ctx.lineWidth = isMe ? 4 : 2.5; ctx.strokeStyle = isMe ? "#ffffff" : "rgba(0,0,0,.45)"; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.stroke();
+    ctx.font = "600 14px Rubik, system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.strokeText(s.n, x, y - R - 9);
+    ctx.fillStyle = "#fff"; ctx.fillText(s.n, x, y - R - 9);
+  }
+  function draw() {
+    const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
+    update(dt);
+    ctx.drawImage(grass, 0, 0);
+    // pool shimmer
+    ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) { const rr = ((now / 30 + i * 20) % 60); ctx.globalAlpha = 1 - rr / 60; ctx.beginPath(); ctx.arc(POOL.x, POOL.y, rr, 0, 7); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+
+    for (const r of remote.values()) if (r.s.a) drawPlayer(r.s, r.dx, r.dy, false);
+    if (me.a) drawPlayer(me, me.x, me.y, true);
+
+    for (const b of balloons) {
+      const lift = Math.sin(Math.min(1, b.dist / BRANGE) * Math.PI) * 10;
+      ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.beginPath(); ctx.arc(b.x, b.y + 6, BR - 1, 0, 7); ctx.fill();
+      ctx.fillStyle = "#3db7ff"; ctx.beginPath(); ctx.arc(b.x, b.y - lift, BR + lift * 0.15, 0, 7); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.beginPath(); ctx.arc(b.x - 2, b.y - lift - 2, 2, 0, 7); ctx.fill();
+    }
+    for (const s of splashes) {
+      const p = (now - s.t) / 500, rr = (s.big ? 46 : 22) * (0.4 + p);
+      ctx.globalAlpha = 1 - p; ctx.fillStyle = "#8fdcff";
+      for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283; ctx.beginPath(); ctx.arc(s.x + Math.cos(a) * rr, s.y + Math.sin(a) * rr, s.big ? 6 : 3.5, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    }
+    if (stick) {
+      ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(stick.ox, stick.oy, 50, 0, 7); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.beginPath(); ctx.arc(stick.x, stick.y, 20, 0, 7); ctx.fill();
+    }
+    // ammo bar
+    if (me.a) for (let i = 0; i < MAXAMMO; i++) { ctx.fillStyle = i < me.ammo ? "#3db7ff" : "rgba(0,0,0,.25)"; ctx.beginPath(); ctx.arc(22 + i * 22, H - 22, 8, 0, 7); ctx.fill(); }
+
+    const ov = $("overlay");
+    ov.textContent = me.a ? "" : "Sırılsıklam oldun! " + Math.max(1, Math.ceil((me.deadUntil - now) / 1000));
+    requestAnimationFrame(draw);
+  }
+
+  // ---------- UI ----------
+  function inviteLink() { return location.origin + location.pathname + "?oda=" + encodeURIComponent(code); }
+  function renderStatus() {
+    if (!online) return;
+    const n = remote.size + 1;
+    $("status").innerHTML = "Oda: <b></b> · " + (n > 1 ? n + " oyuncu" : "Henüz yalnızsın. Davet linkini arkadaşlarına gönder.");
+    $("status").querySelector("b").textContent = code;
+  }
+  function renderPlayers() {
+    const list = [{ n: me.n, c: me.c, k: me.k, you: true }].concat([...remote.values()].map(r => r.s)).sort((a, b) => b.k - a.k);
+    const ol = $("players"); ol.replaceChildren();
+    for (const p of list) {
+      const li = document.createElement("li");
+      const sw = document.createElement("span"); sw.className = "sw"; sw.style.background = p.c;
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = p.n + (p.you ? " (sen)" : "");
+      const sc = document.createElement("span"); sc.className = "sc"; sc.textContent = p.k;
+      li.append(sw, nm, sc); ol.append(li);
+    }
+    renderStatus();
+  }
+  setInterval(renderPlayers, 400);
+
+  $("copyBtn").addEventListener("click", async () => {
+    const link = inviteLink(), box = $("linkBox");
+    try { await navigator.clipboard.writeText(link); $("copyBtn").textContent = "Kopyalandı!"; setTimeout(() => $("copyBtn").textContent = "Davet linkini kopyala", 1500); }
+    catch { box.hidden = false; box.value = link; box.select(); }
+  });
+  $("joinForm").addEventListener("submit", e => {
+    e.preventDefault();
+    me.n = $("nick").value.trim().slice(0, 12) || me.n; $("nick").value = me.n; safeSet("ss_nick", me.n);
+    const nc = clean($("roomCode").value) || randCode();
+    $("roomCode").value = nc;
+    if (nc !== code || !online) { code = nc; me.k = 0; history.replaceState(null, "", "?oda=" + encodeURIComponent(code)); connect(); }
+    document.activeElement.blur();
+  });
+
+  history.replaceState(null, "", "?oda=" + encodeURIComponent(code));
+  spawn();
+  connect();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
