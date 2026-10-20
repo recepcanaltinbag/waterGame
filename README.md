@@ -8,4 +8,4 @@ Tarayıcıda oynanan, ücretsiz, çok oyunculu su balonu savaşı. Kurulum ya da
 2. "Davet linkini kopyala" ile linki arkadaşlarına gönder; aynı oda koduna girenler aynı sahada oynar.
 3. WASD / oklarla yürü, fareyle nişan alıp tıklayarak balon at. Telefonda sol yarıyı sürükle, sağ yarıya dokun.
 
-Üç isabet alan sırılsıklam olur; onu ıslatan 1 puan alır. Oyuncular birbirine PeerJS (WebRTC) ile doğrudan bağlanır.
+Üç isabet alan sırılsıklam olur; onu ıslatan 1 puan alır. Oyuncular ücretsiz, herkese açık bir MQTT sunucusu üzerinden bağlanır (hesap gerekmez).

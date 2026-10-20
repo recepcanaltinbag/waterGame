@@ -90,12 +90,12 @@ kbd { font-family: var(--font-body); font-weight: 700; font-size: 11px; backgrou
   <p class="help"><b>Bilgisayar:</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> veya oklarla yürü, fareyle nişan al, tıklayarak balon at. &nbsp;<b>Telefon:</b> ekranın sol yarısında parmağını sürükleyerek yürü, sağ yarısına dokunarak dokunduğun yere at. Balonların kendiliğinden dolar; ortadaki havuzda daha hızlı dolar.</p>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 (() => {
   // ---------- constants ----------
   const W = 960, H = 600, R = 18, SPEED = 230, BSPEED = 560, BRANGE = 500, BR = 7;
-  const HIT = 34, MAXAMMO = 8, RESPAWN = 2500, PREFIX = "susavasi-v1-";
+  const HIT = 40, MAXAMMO = 8, RESPAWN = 2500, PREFIX = "susavasi-v1-";
   const COLORS = ["#ff5d73", "#ffb547", "#b6f06a", "#c79bff", "#ff6fae", "#ffe15e", "#ff8a4c", "#ffffff"];
   const CRATES = [
     { x: 150, y: 110, w: 90, h: 60 }, { x: 720, y: 110, w: 90, h: 60 },
@@ -147,9 +147,13 @@ kbd { font-family: var(--font-body); font-weight: 700; font-size: 11px; backgrou
     }
   }
 
-  // ---------- network (PeerJS, one player is the hub) ----------
-  let peer = null, isHost = false, hostConn = null, myId = null, gen = 0, online = false;
-  const conns = new Map();        // host only: id -> DataConnection
+  // ---------- network (MQTT relay over WebSocket: works on networks that block direct connections) ----------
+  const BROKERS = [
+    { name: "emqx", url: "wss://broker.emqx.io:8084/mqtt" },
+    { name: "hivemq", url: "wss://broker.hivemq.com:8884/mqtt" }
+  ];
+  const myId = Array.from({ length: 10 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+  let client = null, gen = 0, online = false, base = "", brokerName = "";
   const remote = new Map();       // id -> { s, t, dx, dy }
 
   function sanitizeState(s) {
@@ -161,92 +165,94 @@ kbd { font-family: var(--font-body); font-weight: 700; font-size: 11px; backgrou
       a: s.a ? 1 : 0, aim: num(s.aim, -10, 10)
     };
   }
-  function setRemote(id, raw, age) {
+  function setRemote(id, raw) {
     if (id === myId) return;
     const s = sanitizeState(raw); if (!s) return;
     const prev = remote.get(id);
-    remote.set(id, { s, t: performance.now() - (age || 0), dx: prev && prev.s.a && s.a ? prev.dx : s.x, dy: prev && prev.s.a && s.a ? prev.dy : s.y });
+    remote.set(id, { s, t: performance.now(), dx: prev && prev.s.a && s.a ? prev.dx : s.x, dy: prev && prev.s.a && s.a ? prev.dy : s.y });
   }
   const myState = () => ({ n: me.n, c: me.c, x: Math.round(me.x), y: Math.round(me.y), w: Math.round(me.w), k: me.k, a: me.a, aim: +me.aim.toFixed(2) });
 
   function status(html) { $("status").innerHTML = html; }
   function teardown() {
-    gen++; online = false; isHost = false; hostConn = null;
-    conns.clear(); remote.clear(); balloons.length = 0;
-    if (peer) { try { peer.destroy(); } catch {} peer = null; }
+    gen++; online = false;
+    remote.clear(); balloons.length = 0;
+    if (client) { try { client.publish(base + "/s/" + myId, ""); client.end(true); } catch {} client = null; }
   }
   function connect() {
     teardown();
-    const g = gen;
-    if (!window.Peer) { status("<b>Bağlantı kütüphanesi yüklenemedi.</b> İnternetini kontrol edip sayfayı yenile."); return; }
+    if (!window.mqtt) { status("<b>Bağlantı kütüphanesi yüklenemedi.</b> İnternetini kontrol edip sayfayı yenile."); return; }
+    base = "susavasi/v2/" + code;
+    tryBroker(0, gen);
+  }
+  function tryBroker(i, g) {
+    const b = BROKERS[i % BROKERS.length];
     status("Odaya bağlanılıyor…");
-    const p = new Peer(PREFIX + code); peer = p;
-    p.on("open", id => { if (g !== gen) return; myId = id; isHost = true; online = true; renderStatus(); });
-    p.on("connection", c => { if (g !== gen) return; hostSetup(c); });
-    p.on("error", e => {
-      if (g !== gen) return;
-      if (e.type === "unavailable-id") { try { p.destroy(); } catch {} joinAsClient(g); }
-      else netError(e, g);
+    let done = false;
+    const c = mqtt.connect(b.url, {
+      clientId: "ss_" + myId + "_" + Math.floor(Math.random() * 1e6), clean: true,
+      reconnectPeriod: 0, connectTimeout: 7000, keepalive: 30,
+      will: { topic: base + "/s/" + myId, payload: "", qos: 0, retain: false }
     });
-    p.on("disconnected", () => { if (g === gen && !p.destroyed) try { p.reconnect(); } catch {} });
-  }
-  function joinAsClient(g) {
-    const p = new Peer(); peer = p;
-    p.on("open", id => {
-      if (g !== gen) return; myId = id;
-      const c = p.connect(PREFIX + code, { serialization: "json" }); hostConn = c;
-      c.on("open", () => { if (g !== gen) return; online = true; renderStatus(); });
-      c.on("data", d => { if (g === gen) onData(d, null); });
-      c.on("close", () => { if (g === gen) retry(); });
+    client = c;
+    c.on("connect", () => {
+      if (g !== gen) return c.end(true);
+      c.subscribe(base + "/#", { qos: 0 });
+      online = true; brokerName = b.name; renderStatus();
     });
-    p.on("error", e => {
-      if (g !== gen) return;
-      if (e.type === "peer-unavailable") retry(); else netError(e, g);
+    c.on("message", (topic, buf) => {
+      if (g !== gen || buf.length > 8000) return;
+      const parts = topic.split("/"), kind = parts[3], from = parts[4];
+      if (!from || from === myId || !/^[a-z0-9]{10}$/.test(from)) return;
+      if (buf.length === 0) { remote.delete(from); return; }
+      let d; try { d = JSON.parse(buf.toString()); } catch { return; }
+      if (kind === "s") {
+        setRemote(from, d);
+        if (Array.isArray(d.ev)) for (const e of d.ev.slice(0, 20)) receiveEvent(e, from);
+      } else if (kind === "e") receiveEvent(d, from);
     });
+    const fail = () => {
+      if (done || g !== gen) return; done = true;
+      try { c.end(true); } catch {}
+      const wasOnline = online; online = false;
+      status(wasOnline ? "Bağlantı koptu, yeniden bağlanılıyor…" : "Sunucuya ulaşılamadı, başka sunucu deneniyor…");
+      // stay on the same server after a drop so the room is not split; switch only if it never connected
+      setTimeout(() => { if (g === gen) tryBroker(wasOnline ? i : i + 1, g); }, wasOnline ? 1000 : 300);
+    };
+    c.on("error", fail); c.on("close", fail); c.on("offline", fail);
   }
-  function retry() { // hub left: someone else becomes the hub
-    online = false; status("Oda kurucusu ayrıldı, yeniden bağlanılıyor…");
-    const g = gen; setTimeout(() => { if (g === gen) connect(); }, 300 + Math.random() * 1500);
-  }
-  function netError(e, g) {
-    status("<b>Bağlantı sorunu:</b> " + (e && e.type ? e.type : "bilinmiyor") + ". Birkaç saniye içinde tekrar deneniyor.");
-    setTimeout(() => { if (g === gen) connect(); }, 3000);
-  }
-  function hostSetup(c) {
-    c.on("open", () => conns.set(c.peer, c));
-    c.on("data", d => {
-      if (!d || typeof d !== "object") return;
-      if (d.type === "st") setRemote(c.peer, d.s, 0);
-      else if (d.type === "ev") { handleEvent(d.ev, c.peer); for (const [id, o] of conns) if (id !== c.peer && o.open) o.send({ type: "ev", ev: d.ev, from: c.peer }); }
-    });
-    c.on("close", () => { conns.delete(c.peer); remote.delete(c.peer); });
-  }
-  function onData(d) {
-    if (!d || typeof d !== "object") return;
-    if (d.type === "all" && d.s && typeof d.s === "object") {
-      const seen = new Set();
-      for (const id of Object.keys(d.s).slice(0, 32)) { seen.add(id); setRemote(id, d.s[id], d.s[id] && d.s[id].age); }
-      for (const id of [...remote.keys()]) if (!seen.has(id)) remote.delete(id);
-    } else if (d.type === "ev") handleEvent(d.ev, String(d.from || ""));
+  // Public brokers drop messages now and then, so every event is also repeated
+  // inside the next state messages for 3 s; receivers skip ones they have seen.
+  const recentEvents = [], seenEvents = new Set();
+  let evN = 0;
+  function receiveEvent(e, from) {
+    if (!e || typeof e !== "object" || typeof e.eid !== "number") return;
+    const key = from + ":" + e.eid;
+    if (seenEvents.has(key)) return;
+    seenEvents.add(key);
+    if (seenEvents.size > 2000) seenEvents.delete(seenEvents.values().next().value);
+    handleEvent(e, from);
   }
   function sendEvent(ev) {
+    ev.eid = evN++;
     handleEvent(ev, myId);
-    if (isHost) { for (const o of conns.values()) if (o.open) o.send({ type: "ev", ev, from: myId }); }
-    else if (hostConn && hostConn.open) hostConn.send({ type: "ev", ev });
+    recentEvents.push({ ev, t: performance.now() });
+    if (online && client) client.publish(base + "/e/" + myId, JSON.stringify({ ...ev, ago: 0 }), { qos: 0 });
   }
   setInterval(() => {
-    if (!online) return;
-    if (isHost) {
-      const now = performance.now(), all = { [myId]: { ...myState(), age: 0 } };
-      for (const [id, r] of remote) if (now - r.t < 5000) all[id] = { ...r.s, age: Math.round(now - r.t) };
-      for (const o of conns.values()) if (o.open) o.send({ type: "all", s: all });
-    } else if (hostConn && hostConn.open) hostConn.send({ type: "st", s: myState() });
-  }, 60);
+    const now = performance.now();
+    while (recentEvents.length && now - recentEvents[0].t > 3000) recentEvents.shift();
+    const st = myState();
+    if (recentEvents.length) st.ev = recentEvents.slice(-12).map(r => ({ ...r.ev, ago: Math.round(now - r.t) }));
+    if (online && client) client.publish(base + "/s/" + myId, JSON.stringify(st), { qos: 0 });
+  }, 90);
+  addEventListener("pagehide", () => { try { client && client.publish(base + "/s/" + myId, ""); } catch {} });
 
   // ---------- balloons & events ----------
   const balloons = [];   // {id, owner, x, y, vx, vy, dist}
   const splashes = [];   // {x, y, t, big}
   let shotN = 0, lastShot = 0;
+  const hitIds = new Set();
   const nameOf = id => id === myId ? me.n : (remote.get(id) ? remote.get(id).s.n : "Biri");
 
   function handleEvent(ev, from) {
@@ -255,8 +261,13 @@ kbd { font-family: var(--font-body); font-weight: 700; font-size: 11px; backgrou
     if (ev.k === "shot" && num(ev.x) && num(ev.y) && num(ev.vx) && num(ev.vy)) {
       if (balloons.length > 200) return;
       const m = Math.hypot(ev.vx, ev.vy) || 1;
-      balloons.push({ id: String(ev.id).slice(0, 40), owner: from, x: ev.x, y: ev.y, vx: ev.vx / m * BSPEED, vy: ev.vy / m * BSPEED, dist: 0 });
+      const vx = ev.vx / m * BSPEED, vy = ev.vy / m * BSPEED;
+      const late = num(ev.ago) ? Math.max(0, Math.min(3, ev.ago / 1000)) : 0;
+      if (late * BSPEED >= BRANGE) return;
+      if (late > 0 && hitIds.has(String(ev.id))) return;
+      balloons.push({ id: String(ev.id).slice(0, 40), owner: from, x: ev.x + vx * late, y: ev.y + vy * late, vx, vy, dist: late * BSPEED });
     } else if (ev.k === "hit") {
+      hitIds.add(String(ev.id)); if (hitIds.size > 500) hitIds.delete(hitIds.values().next().value);
       const i = balloons.findIndex(b => b.id === ev.id); if (i >= 0) balloons.splice(i, 1);
       if (num(ev.x) && num(ev.y)) splashes.push({ x: ev.x, y: ev.y, t: performance.now(), big: !!ev.soak });
       if (ev.soak) {
